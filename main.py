@@ -3,6 +3,12 @@
 import tkinter as tk
 import sys
 from gui import FakeNewsSimulatorGUI
+import shutil
+import os
+
+# Replace old simulator with new version
+if os.path.exists('simulator_new.py'):
+    shutil.copy('simulator_new.py', 'simulator.py')
 
 def main():
     root = tk.Tk()

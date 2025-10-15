@@ -234,26 +234,56 @@ class FakeNewsSimulatorGUI:
         if not hasattr(self, 'pos') or self.pos is None:
             self.pos = nx.spring_layout(self.abm_simulator.G)
             
-        # Draw the ABM network
-        nx.draw(self.abm_simulator.G, 
-               pos=self.pos,
-               node_color=colors,
-               with_labels=True,
-               node_size=500,
-               font_size=8,
-               ax=ax1)
+        # Get or create fixed positions for nodes
+        if not hasattr(self, 'pos') or self.pos is None:
+            self.pos = nx.spring_layout(self.abm_simulator.G, k=1, iterations=50, seed=42)
+            
+        # Draw the ABM network with enhanced styling
+        nx.draw_networkx_edges(self.abm_simulator.G, 
+                             pos=self.pos,
+                             edge_color='gray',
+                             width=1.0,
+                             alpha=0.5,
+                             ax=ax1)
+                             
+        # Draw nodes with better visibility
+        nx.draw_networkx_nodes(self.abm_simulator.G,
+                             pos=self.pos,
+                             node_color=colors,
+                             node_size=700,  # Increased node size
+                             edgecolors='black',  # Black border for nodes
+                             linewidths=1.5,
+                             alpha=0.9,
+                             ax=ax1)
+                             
+        # Add labels with better visibility
+        nx.draw_networkx_labels(self.abm_simulator.G,
+                              pos=self.pos,
+                              font_size=10,
+                              font_weight='bold',
+                              font_color='black',
+                              ax=ax1)
         
         # Add legend and border for ABM plot
         ax1.legend(handles=[red_patch, blue_patch],
                   loc='upper right',
-                  fontsize=8,
-                  framealpha=0.9)
+                  title="Agent States",
+                  title_fontsize=10,
+                  fontsize=9,
+                  framealpha=0.9,
+                  edgecolor='black')
         
-        ax1.set_title("Agent-Based Model (ABM)", pad=10, fontsize=10, fontweight='bold')
+        # Set title and style plot
+        ax1.set_title("Agent-Based Model (ABM)", pad=10, fontsize=12, fontweight='bold')
+        ax1.set_facecolor('#f8f8f8')  # Light gray background
         for spine in ax1.spines.values():
             spine.set_visible(True)
             spine.set_linewidth(1.5)
             spine.set_color('black')
+            
+        # Ensure proper aspect ratio and margins
+        ax1.set_aspect('equal')
+        ax1.margins(0.15)
         
         # PBM visualization (right)
         if hasattr(self, 'pbm_simulator'):
@@ -667,15 +697,24 @@ class FakeNewsSimulatorGUI:
             self.intervention
         )
 
-        # Initialize results containers with empty data
+        # Initialize results containers with initial state
+        if self._sim_topic == "Financial Scam":
+            initial_believers = sum(1 for i in self.abm_simulator.agent_states 
+                                if self.abm_simulator.agent_states[i]['scammed'])
+        else:
+            initial_believers = sum(1 for i in self.abm_simulator.agent_states 
+                                if self.abm_simulator.agent_states[i]['shared'])
+        
         self.abm_results = {
-            'believer_counts': [],
+            'believer_counts': [initial_believers],  # Start with 2 initial believers
             'total_agents': num_agents
         }
+        
+        # Initialize PBM results with same initial state
         self.pbm_results = {
-            'susceptible': [],
-            'believers': [],
-            'immune': []
+            'susceptible': [num_agents - 2],  # Initial susceptible
+            'believers': [2],                 # Initial believers
+            'immune': [0]                     # Initial immune
         }
 
         # Update UI
