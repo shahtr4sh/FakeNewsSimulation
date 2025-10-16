@@ -156,6 +156,10 @@ class FakeNewsSimulatorGUI:
         self.round_history = []  # Track victims each round
         self.scam_history = []   # Track scam victims each round
         self.intervention_rounds = []  # Reset intervention rounds
+        
+        # --- PBM initialization (independent model) ---
+        self.pbm_believers = [0.1]  # Start with 10% believers (normalized 0–1)
+        self.pbm_history = []       # To store PBM believers over time
 
         # Choose agent source
         if self.agent_source.get() == "Random":
@@ -380,6 +384,16 @@ class FakeNewsSimulatorGUI:
                 self.agent_states[i]['belief'] = new_beliefs[i]
                 self.agent_states[i]['shared'] = new_beliefs[i] > theta_s
             self.round_history.append([self.agent_states[i]['shared'] for i in nodes])
+        
+            # --- PBM update (independent logistic model) ---
+            beta = 0.8 * (self.juiciness.get() / 100.0) * self._sim_topic_weight  # strong dependence on topic & juiciness
+            gamma = 0.05 + (0.05 if self.intervention else 0.02)  # Decay rate higher with intervention
+            B_t = self.pbm_believers[-1]
+            B_next = B_t + beta * B_t * (1 - B_t) - gamma * B_t  # Logistic diffusion equation
+            B_next = max(0, min(1, B_next))  # Keep value within [0,1]
+            self.pbm_believers.append(B_next)
+            self.pbm_history.append(B_next)
+        
         self.round += 1
         self.round_label.config(text=f"Round: {self.round}")
         if self.round >= self.max_rounds:
@@ -450,12 +464,11 @@ class FakeNewsSimulatorGUI:
             abm_counts = []
             abm_peak = abm_peak_round = abm_final = abm_total_shares = 0
 
-        # --- PBM approximation (simple proportional decay or diffusion) ---
-        # We'll derive PBM believers as a smoothed trend based on ABM.
-        if abm_counts:
-            pbm_values = np.maximum(0, np.round(np.linspace(abm_counts[0], abm_final, len(abm_counts))))
-            pbm_peak = int(max(pbm_values))
-            pbm_peak_round = int(np.argmax(pbm_values) + 1)
+        # --- PBM results (from independent model) ---
+        if self.pbm_history:
+            pbm_values = np.array(self.pbm_history) * len(self.agent_states)
+            pbm_peak = int(pbm_values.max())
+            pbm_peak_round = int(pbm_values.argmax() + 1)
             pbm_final = int(pbm_values[-1])
             pbm_diffusion = round((pbm_peak - pbm_final) / max(1, pbm_peak), 3)
         else:

@@ -143,7 +143,6 @@ class FakeNewsSimulatorGUI:
         self.reset_btn.grid_remove()
         self.run_btn.grid_remove()
         self.update_graph()
-        self.root.after(500, self.automate_rounds)
 
     def automate_rounds(self):
         """Automatically run simulation rounds."""
@@ -160,7 +159,7 @@ class FakeNewsSimulatorGUI:
         
         # Schedule the next round after a delay
         if self.round < self.max_rounds:  # Double check we haven't hit max rounds
-            self.root.after(1000, self.automate_rounds)  # Increased delay to 1 second for better visualization
+            self.root.after(500, self.automate_rounds)  # Increased delay to 1 second for better visualization
 
     def run_next_round(self):
         """Run the next simulation round for both models."""
@@ -183,6 +182,15 @@ class FakeNewsSimulatorGUI:
             self.round_history.append(abm_result)
             self.abm_results['believer_counts'].append(sum(1 for x in abm_result if x))
 
+       # --- PBM update (independent logistic model) ---
+        beta = 0.8 * (self.juiciness.get() / 100.0) * self._sim_topic_weight  # Spread rate influenced by juiciness
+        gamma = 0.05 + (0.05 if self.intervention else 0.02)  # Decay rate increases with intervention
+        B_t = self.pbm_believers[-1]
+        B_next = B_t + beta * B_t * (1 - B_t) - gamma * B_t  # Logistic diffusion equation
+        B_next = max(0, min(1, B_next))  # Keep value within [0,1]
+        self.pbm_believers.append(B_next)
+        self.pbm_history.append(B_next)
+       
         # Run PBM simulation step and update rates if needed
         if self.intervention:
             self.pbm_simulator.adjust_rates(
@@ -207,7 +215,6 @@ class FakeNewsSimulatorGUI:
             self.show_summary()
 
     def update_graph(self):
-        """Update the network visualization."""
         # Clear the entire figure
         self.fig.clear()
         
@@ -236,7 +243,7 @@ class FakeNewsSimulatorGUI:
             
         # Get or create fixed positions for nodes
         if not hasattr(self, 'pos') or self.pos is None:
-            self.pos = nx.spring_layout(self.abm_simulator.G, k=1, iterations=50, seed=42)
+            self.pos = nx.spring_layout(self.abm_simulator.G, k=1.5, iterations=100, seed=42)
             
         # Draw the ABM network with enhanced styling
         nx.draw_networkx_edges(self.abm_simulator.G, 
@@ -285,6 +292,16 @@ class FakeNewsSimulatorGUI:
         ax1.set_aspect('equal')
         ax1.margins(0.15)
         
+        # Fixed border size (if you want to ensure the plot stays the same)
+        for spine in ax1.spines.values():
+            spine.set_visible(True)
+            spine.set_linewidth(2)  # Thicker border
+            spine.set_color('black')  # Darker border color
+        
+        # Set fixed size for the axes (width, height)
+        ax1.set_xlim(-1.5, 1.5)  # You can adjust these values based on your graph's layout
+        ax1.set_ylim(-1.5, 1.5)  # Same here for the height of the axes
+        
         # PBM visualization (right)
         if hasattr(self, 'pbm_simulator'):
             # Get total population and current data
@@ -315,7 +332,7 @@ class FakeNewsSimulatorGUI:
                 ax2.grid(True, alpha=0.2, linestyle='--')
                 ax2.set_xlabel('Round', fontsize=9)
                 ax2.set_ylabel('Population', fontsize=9)
-                ax2.set_title('Population-Based Model', pad=10, fontsize=10, fontweight='bold')
+                ax2.set_title('Population-Based Model (PBM)', pad=10, fontsize=10, fontweight='bold')
                 ax2.legend(loc='upper right', fontsize=8, framealpha=0.9)
                 
                 # Add spines
@@ -346,7 +363,7 @@ class FakeNewsSimulatorGUI:
         
         # PBM visualization (right plot styling)
         if hasattr(self, 'pbm_simulator'):
-            ax2.set_title("Population-Based Model", pad=10, fontsize=10, fontweight='bold')
+            ax2.set_title("Population-Based Model (PBM)", pad=10, fontsize=10, fontweight='bold')
             ax2.set_xlabel("Round", fontsize=9)
             ax2.set_ylabel("Population Size", fontsize=9)
             ax2.tick_params(axis='both', which='major', labelsize=8)
@@ -372,11 +389,26 @@ class FakeNewsSimulatorGUI:
         # Create summary window
         summary_win = tk.Toplevel(self.root)
         summary_win.title("Simulation Summary")
-        summary_win.geometry("600x400")
+        summary_win.geometry("600x600")
+        summary_win.minsize(600, 600)    # Minimum size for the window
+        summary_win.configure(bg="#f4f4f4")
         
         # Create frames for different sections
-        summary_frame = tk.Frame(summary_win)
-        summary_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
+        summary_frame = tk.Frame(summary_win, bg="#f4f4f4")
+        summary_frame.pack(fill=tk.BOTH, expand=True, padx=15, pady=10)
+        
+        # Create a canvas with scrollbar for scrolling content if needed
+        canvas = tk.Canvas(summary_frame)
+        scrollbar = ttk.Scrollbar(summary_frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = tk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+      )
+    
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
         
         # Show topic-specific summary
         if self._sim_topic == "Financial Scam":
@@ -690,7 +722,14 @@ class FakeNewsSimulatorGUI:
         self.abm_simulator.seed_initial_state(is_scam=(self._sim_topic == "Financial Scam"))
 
         # Initialize PBM simulator with the same number of agents
+        self.pbm_believers = [0.1]  # Start with 10% believers (normalized 0–1)
+        self.pbm_history = []       # To store PBM believers over time
+        
+        # --- PBM simulator independent initialization ---
+        # Initialize PBM with agent count (or use custom initialization based on your setup)
         self.pbm_simulator = PopulationSimulator(num_agents)
+        
+        # Adjust PBM rates based on simulation conditions (topic weight, juiciness, intervention)
         self.pbm_simulator.adjust_rates(
             self._sim_topic_weight,
             self.juiciness.get() / 100.0,
@@ -784,7 +823,7 @@ class FakeNewsSimulatorGUI:
         # Create summary window
         summary_win = tk.Toplevel(self.root)
         summary_win.title("Simulation Summary")
-        summary_win.geometry("600x600")  # Made taller to fit all content
+        summary_win.geometry("600x700")  # Made taller to fit all content
         summary_win.minsize(600, 600)    # Set minimum size
         
         # Create main container frame with scrolling
@@ -897,3 +936,4 @@ class FakeNewsSimulatorGUI:
         self.ax.set_title("Fake News Spread - Round 0")
         self.canvas.draw()
         self.round_label.config(text="Round: 0")
+        self.intervention = False
