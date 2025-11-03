@@ -1,14 +1,15 @@
 """Main entry point for the Fake News Simulator application."""
 
-import tkinter as tk
-import sys
-from gui import FakeNewsSimulatorGUI
 import shutil
 import os
 
-# Replace old simulator with new version
+# Ensure the new simulator replaces the old one before importing GUI
 if os.path.exists('simulator_new.py'):
     shutil.copy('simulator_new.py', 'simulator.py')
+
+import tkinter as tk
+import sys
+from gui import FakeNewsSimulatorGUI
 
 def main():
     root = tk.Tk()

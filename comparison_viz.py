@@ -7,7 +7,7 @@ import tkinter as tk
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
 class ComparisonVisualizer:
-    def __init__(self, abm_results: Dict, pbm_results: Dict, context: str):
+    def __init__(self, abm_results: Dict, pbm_results: Dict, context: str, intervention_rounds=None):
         """Initialize the comparison visualizer.
         
         Args:
@@ -18,6 +18,8 @@ class ComparisonVisualizer:
         self.abm_results = abm_results
         self.pbm_results = pbm_results
         self.context = context
+        # intervention_rounds: optional list of rounds where interventions occurred
+        self.intervention_rounds = intervention_rounds or []
         
     def show_comparison(self, window: tk.Toplevel) -> None:
         """Display comparison visualizations in the provided window.
@@ -84,6 +86,14 @@ class ComparisonVisualizer:
         ax.set_title('Belief Spread Over Time: ABM vs PBM', pad=10)
         ax.set_xlabel('Round', fontsize=10)
         ax.set_ylabel('Number of Believers', fontsize=10)
+        # Draw intervention vertical lines (green dotted) if provided; default to round 5 if none
+        ivs = self.intervention_rounds if self.intervention_rounds else [5]
+        first = True
+        for r in ivs:
+            # draw at integer round value
+            ax.axvline(x=r, color='green', linestyle=':', linewidth=2, label='Intervention' if first else None)
+            first = False
+
         ax.legend(fontsize=9, loc='upper left')
         ax.grid(True, alpha=0.3)
         ax.set_ylim(bottom=0)
@@ -101,35 +111,59 @@ class ComparisonVisualizer:
             int(self.pbm_results['susceptible'][-1])
         ]
         
-        # Create mini pie charts
-        # Colors: red for believers, blue for non-believers
-        colors = ['red', 'blue']  # [believers, non-believers]
-        
-        # Create outer ring (ABM)
+        # Create mini pie charts (donut style) and show percentages on both rings.
+        # Colors: red for believers, blue for non-believers (darker outer, lighter inner)
+        outer_colors = ['red', 'blue']  # [believers, non-believers]
+        inner_colors = ['lightcoral', 'lightblue']
+
+        # helper to make compact autopct with a prefix per wedge
+        def make_autopct(prefixes):
+            idx = {'i': 0}
+            def _autopct(pct):
+                try:
+                    label = prefixes[idx['i']]
+                except Exception:
+                    label = ''
+                idx['i'] += 1
+                # compact wording: prefix followed by percentage with one decimal
+                return f"{label} {pct:.1f}%"
+            return _autopct
+
+        # Outer ring (ABM) — show ABM percentages per wedge
         wedges1, texts1, autotexts1 = ax.pie(
-            abm_final, radius=1, center=(0, 0),
-            colors=colors,
-            labels=['Believers', 'Non-believers'],
-            autopct='%1.1f%%',
-            wedgeprops=dict(width=0.3)
+            abm_final, radius=1.0, center=(0, 0),
+            colors=outer_colors,
+            labels=None,
+            autopct=make_autopct("  "),
+            pctdistance=0.82,
+            wedgeprops=dict(width=0.3, edgecolor='white')
         )
-        
-        # Create inner ring (PBM)
+
+        # Inner ring (PBM) — show PBM percentages per wedge using lighter shades
         wedges2, texts2, autotexts2 = ax.pie(
             pbm_final, radius=0.7, center=(0, 0),
-            colors=['lightcoral', 'lightblue'],  # lighter shades for inner ring
-            autopct='%1.1f%%',
-            wedgeprops=dict(width=0.3)
+            colors=inner_colors,
+            labels=None,
+            autopct=make_autopct(""),
+            pctdistance=0.66,
+            wedgeprops=dict(width=0.3, edgecolor='white')
         )
 
-        # Hide inner ring labels and percentages
-        for text in texts2 + autotexts2:
-            text.set_text('')
-            
+        # Tidy text appearance: smaller, bold for readability in the donut
+        for t in autotexts1 + autotexts2:
+            t.set_fontsize(8)
+            t.set_fontweight('bold')
+            t.set_color('black')
+
         ax.set_title('Final State Comparison\nOuter: ABM, Inner: PBM')
 
-        # Remove inner ring labels and adjust text properties
-        ax.set_title('Final State Comparison\nOuter: ABM, Inner: PBM')
+        # Add legend mapping colors to labels (use the darker shades for legend clarity)
+        import matplotlib.patches as mpatches
+        legend_handles = [
+            mpatches.Patch(color='blue', label='Non-believers'),
+            mpatches.Patch(color='red', label='Believers')
+        ]
+        ax.legend(handles=legend_handles, loc='upper right', fontsize=9)
         
     def _plot_metrics_comparison(self, ax):
         """Plot comparison of key metrics."""

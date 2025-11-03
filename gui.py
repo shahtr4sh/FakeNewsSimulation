@@ -7,6 +7,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 import matplotlib.pyplot as plt
 import networkx as nx
 import pandas as pd
+import numpy as np
 import os
 
 from simulator import FakeNewsSimulator
@@ -23,7 +24,7 @@ class FakeNewsSimulatorGUI:
         # Initialize variables
         self.topic = tk.StringVar(value="Ransomware Alert")
         self.juiciness = tk.IntVar(value=50)
-        self.agent_source = tk.StringVar(value="CSV")
+    # Agent sources are fixed: ABM uses CSV, PBM uses random-average agents
         self.context_text = tk.StringVar(value="")
         
         # Simulation state
@@ -66,17 +67,50 @@ class FakeNewsSimulatorGUI:
         )
         self.juiciness_scale.grid(row=2, column=1, padx=5)
 
-        # Agent source selection
-        tk.Label(config_frame, text="Agent Source:").grid(row=3, column=0, padx=5)
-        agent_source_menu = ttk.Combobox(
-            config_frame, textvariable=self.agent_source,
-            values=["CSV", "Random"], state="readonly"
-        )
-        agent_source_menu.grid(row=3, column=1, padx=5)
+        # Note: ABM uses CSV agent profiles; PBM uses random-average agents by default
+        tk.Label(config_frame, text="ABM: CSV profiles; PBM: random-average agents").grid(row=3, column=0, columnspan=3, padx=5, sticky='w')
 
         # Round label
         self.round_label = tk.Label(config_frame, text=f"Round: {self.round}")
         self.round_label.grid(row=0, column=2, padx=10)
+
+        # --- Parameters panel (tunable simulation params) ---
+        params_frame = tk.LabelFrame(self.root, text="Simulation Parameters", padx=8, pady=6)
+        params_frame.pack(fill=tk.X, padx=10, pady=(0, 8))
+
+        # PBM contact rate
+        tk.Label(params_frame, text="PBM contact rate:").grid(row=0, column=0, sticky='w')
+        self.pbm_contact_rate_var = tk.DoubleVar(value=0.4)
+        tk.Scale(params_frame, from_=0.0, to=1.0, resolution=0.01, orient=tk.HORIZONTAL,
+                 variable=self.pbm_contact_rate_var, length=220).grid(row=0, column=1, padx=6)
+
+        # PBM belief rate
+        tk.Label(params_frame, text="PBM belief rate:").grid(row=0, column=2, sticky='w')
+        self.pbm_belief_rate_var = tk.DoubleVar(value=0.3)
+        tk.Scale(params_frame, from_=0.0, to=1.0, resolution=0.01, orient=tk.HORIZONTAL,
+                 variable=self.pbm_belief_rate_var, length=220).grid(row=0, column=3, padx=6)
+
+        # PBM recovery rate
+        tk.Label(params_frame, text="PBM recovery rate:").grid(row=1, column=0, sticky='w')
+        self.pbm_recovery_rate_var = tk.DoubleVar(value=0.1)
+        tk.Scale(params_frame, from_=0.0, to=1.0, resolution=0.01, orient=tk.HORIZONTAL,
+                 variable=self.pbm_recovery_rate_var, length=220).grid(row=1, column=1, padx=6)
+
+        # PBM initial believers (override)
+        tk.Label(params_frame, text="PBM initial believers:").grid(row=1, column=2, sticky='w')
+        self.pbm_initial_believers_var = tk.IntVar(value=5)
+        tk.Spinbox(params_frame, from_=0, to=10000, textvariable=self.pbm_initial_believers_var, width=8).grid(row=1, column=3, padx=6)
+
+        # Calibration multiplier (used to scale PBM contact rate by network density)
+        tk.Label(params_frame, text="Calibration multiplier:").grid(row=2, column=0, sticky='w')
+        self.calibration_multiplier_var = tk.DoubleVar(value=3.0)
+        tk.Scale(params_frame, from_=0.0, to=10.0, resolution=0.1, orient=tk.HORIZONTAL,
+                 variable=self.calibration_multiplier_var, length=220).grid(row=2, column=1, padx=6)
+
+        # Max rounds override
+        tk.Label(params_frame, text="Max rounds:").grid(row=2, column=2, sticky='w')
+        self.max_rounds_var = tk.IntVar(value=self.max_rounds)
+        tk.Spinbox(params_frame, from_=1, to=1000, textvariable=self.max_rounds_var, width=6).grid(row=2, column=3, padx=6)
 
         # Button frame
         button_frame = tk.Frame(self.root)
@@ -135,6 +169,11 @@ class FakeNewsSimulatorGUI:
         self.round_history = []
         self.scam_history = []
         self.intervention_rounds = []
+        # Apply max rounds override from parameters panel (if set)
+        try:
+            self.max_rounds = int(self.max_rounds_var.get())
+        except Exception:
+            pass
         
         # Initialize simulators and start simulation
         self._init_simulators()
@@ -425,7 +464,8 @@ class FakeNewsSimulatorGUI:
         viz = ComparisonVisualizer(
             self.abm_results,
             self.pbm_results,
-            self.context_text.get()
+            self.context_text.get(),
+            intervention_rounds=self.intervention_rounds
         )
         viz.show_comparison(comparison_win)
         
@@ -717,43 +757,110 @@ class FakeNewsSimulatorGUI:
 
         # Initialize ABM simulator
         num_agents = len(self.df_agents)
-        agent_data = None if self.agent_source.get() == "Random" else self.df_agents
-        self.abm_simulator = FakeNewsSimulator(num_agents, agent_data)
+        # ABM must use the CSV agent profiles
+        self.abm_simulator = FakeNewsSimulator(num_agents, self.df_agents)
         self.abm_simulator.seed_initial_state(is_scam=(self._sim_topic == "Financial Scam"))
 
-        # Initialize PBM simulator with the same number of agents
-        self.pbm_believers = [0.1]  # Start with 10% believers (normalized 0–1)
-        self.pbm_history = []       # To store PBM believers over time
-        
+        # Initialize PBM: use random-average agents by default (each agent = column means)
+        means = self.df_agents.mean(numeric_only=True)
+        # Repeat the mean row for num_agents rows to create average agents
+        pbm_agent_df = pd.DataFrame([means.values] * num_agents, columns=means.index)
+
+        # Estimate initial believer probability per PBM agent using a simple heuristic
+        # (mirrors ABM trait influence in a compact form)
+        cb = pbm_agent_df.get('confirmation_bias', pd.Series(0.5, index=pbm_agent_df.index)).astype(float)
+        es = pbm_agent_df.get('emotional_susceptibility', pd.Series(0.5, index=pbm_agent_df.index)).astype(float)
+        tl = pbm_agent_df.get('trust_level', pd.Series(0.5, index=pbm_agent_df.index)).astype(float)
+        ct = pbm_agent_df.get('critical_thinking', pd.Series(0.5, index=pbm_agent_df.index)).astype(float)
+
+        juice = self.juiciness.get() / 100.0
+        topic_w = self._sim_topic_weight
+        # Probability heuristic
+        P = 0.3 + 0.2 * topic_w + 0.15 * ((cb + es + tl) / 3.0) - 0.2 * ct
+        P = np.clip(P, 0.0, 1.0)
+        initial_believers_pbm = int(round(P.sum()))
+
+        # Allow user override for PBM initial believers
+        try:
+            user_init = int(self.pbm_initial_believers_var.get())
+            if user_init > 0:
+                initial_believers_pbm = user_init
+            elif user_init == 0:
+                initial_believers_pbm = 0
+        except Exception:
+            pass
+
+        # PBM state trackers
+        self.pbm_believers = [initial_believers_pbm / max(1, num_agents)]
+        self.pbm_history = []
+
         # --- PBM simulator independent initialization ---
-        # Initialize PBM with agent count (or use custom initialization based on your setup)
-        self.pbm_simulator = PopulationSimulator(num_agents)
-        
+        # Pass the estimated initial believers into the PopulationSimulator
+        self.pbm_simulator = PopulationSimulator(num_agents, initial_believers=initial_believers_pbm)
+
         # Adjust PBM rates based on simulation conditions (topic weight, juiciness, intervention)
         self.pbm_simulator.adjust_rates(
             self._sim_topic_weight,
-            self.juiciness.get() / 100.0,
+            juice,
             self.intervention
         )
 
-        # Initialize results containers with initial state
+        # Override PBM rates with user-specified parameters (if provided)
+        try:
+            cr = float(self.pbm_contact_rate_var.get())
+            br = float(self.pbm_belief_rate_var.get())
+            rr = float(self.pbm_recovery_rate_var.get())
+            # Apply if sensible
+            if 0.0 <= cr <= 1.0:
+                self.pbm_simulator.rates.contact_rate = cr
+            if 0.0 <= br <= 1.0:
+                # Some models store belief_rate as 'belief_rate' or params; try both
+                setattr(self.pbm_simulator.rates, 'belief_rate', br)
+            if 0.0 <= rr <= 1.0:
+                setattr(self.pbm_simulator.rates, 'recovery_rate', rr)
+        except Exception:
+            pass
+
+        # --- Calibration: scale PBM contact_rate to account for ABM network structure ---
+        # Compute average degree (avg number of neighbors) in the ABM network
+        try:
+            degrees = [d for _, d in self.abm_simulator.G.degree()]
+            avg_deg = float(np.mean(degrees)) if len(degrees) > 0 else 0.0
+            # Network density = avg_deg / (N-1)
+            density = avg_deg / max(1.0, (num_agents - 1))
+            # Scale factor: modest amplification as density increases
+            mult = 3.0
+            try:
+                mult = float(self.calibration_multiplier_var.get())
+            except Exception:
+                pass
+            scale = 1.0 + mult * density
+            # Apply scaling to PBM contact rate (keep within reasonable bound)
+            original = getattr(self.pbm_simulator.rates, 'contact_rate', None)
+            if original is not None:
+                self.pbm_simulator.rates.contact_rate = min(0.95, original * scale)
+        except Exception:
+            # If anything goes wrong, leave PBM rates as-is
+            pass
+
+        # Initialize results containers with initial state (use estimated PBM initial believers)
         if self._sim_topic == "Financial Scam":
-            initial_believers = sum(1 for i in self.abm_simulator.agent_states 
+            initial_believers_abm = sum(1 for i in self.abm_simulator.agent_states 
                                 if self.abm_simulator.agent_states[i]['scammed'])
         else:
-            initial_believers = sum(1 for i in self.abm_simulator.agent_states 
+            initial_believers_abm = sum(1 for i in self.abm_simulator.agent_states 
                                 if self.abm_simulator.agent_states[i]['shared'])
-        
+
         self.abm_results = {
-            'believer_counts': [initial_believers],  # Start with 2 initial believers
+            'believer_counts': [initial_believers_abm],
             'total_agents': num_agents
         }
-        
-        # Initialize PBM results with same initial state
+
+        # Initialize PBM results with the initial counts we computed
         self.pbm_results = {
-            'susceptible': [num_agents - 2],  # Initial susceptible
-            'believers': [2],                 # Initial believers
-            'immune': [0]                     # Initial immune
+            'susceptible': [num_agents - initial_believers_pbm],
+            'believers': [initial_believers_pbm],
+            'immune': [0]
         }
 
         # Update UI
@@ -871,7 +978,8 @@ class FakeNewsSimulatorGUI:
         viz = ComparisonVisualizer(
             abm_results,
             pbm_results,
-            self.context_text.get()
+            self.context_text.get(),
+            intervention_rounds=self.intervention_rounds
         )
         viz.show_comparison(comparison_win)
         

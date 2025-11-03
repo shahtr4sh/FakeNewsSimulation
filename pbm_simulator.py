@@ -12,14 +12,20 @@ class SimulationRates:
     recovery_rate: float = 0.1   # Rate of becoming immune
 
 class PopulationSimulator:
-    def __init__(self, initial_population: int):
-        """Initialize the population-based simulator."""
+    def __init__(self, initial_population: int, initial_believers: int = 2):
+        """Initialize the population-based simulator.
+
+        Args:
+            initial_population: total population size
+            initial_believers: initial number of believers in the population
+        """
         self.total_population = initial_population
         self.rates = SimulationRates()
-        
-        # Initialize populations (start with 2 believers)
-        self.susceptible = initial_population - 2
-        self.believers = 2
+
+        # Initialize populations with configurable initial believers
+        self.initial_believers = max(0, int(initial_believers))
+        self.susceptible = initial_population - self.initial_believers
+        self.believers = int(self.initial_believers)
         self.immune = 0
         
         # Track history

@@ -158,7 +158,7 @@ class FakeNewsSimulatorGUI:
         self.intervention_rounds = []  # Reset intervention rounds
         
         # --- PBM initialization (independent model) ---
-        self.pbm_believers = [0.1]  # Start with 10% believers (normalized 0–1)
+        self.pbm_believers = [0.3]  # Start with 30% believers (normalized 0–1)
         self.pbm_history = []       # To store PBM believers over time
 
         # Choose agent source
@@ -279,13 +279,6 @@ class FakeNewsSimulatorGUI:
                 self.intervention_rounds.append(self.round)
             self.run_next_round()
             self.root.after(500, self.automate_rounds)
-
-    # Intervention is now automated; this method is no longer used.
-    # def toggle_intervention(self):
-    #     self.intervention = not self.intervention
-    #     self.intervene_btn.config(text="Undo Intervention" if self.intervention else "Intervene")
-    #     if self.intervention:
-    #         self.intervention_rounds.append(self.round)
 
     def run_next_round(self):
         if self.round >= self.max_rounds:
